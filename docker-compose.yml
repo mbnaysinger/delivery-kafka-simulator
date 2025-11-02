@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  # 1. Serviço Zookeeper (Requerido pelo Kafka - Versão Legacy/Stable)
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  # 2. Serviço Kafka Broker
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092" # Porta que seu NestJS (host) usará para se conectar
+      - "9094:9094" # Porta interna para comunicação inter-broker/docker
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181' # Conexão com o container Zookeeper
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT_HOST:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      
+      # *** Configuração CRUCIAL para conectar do seu HOST (NestJS) ***
+      # O NestJS (rodando no HOST) se conecta ao Kafka usando 'localhost:9092'
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT_HOST://localhost:9092,PLAINTEXT://kafka:9094
+      
+      # LISTENERS internos do container
+      KAFKA_LISTENERS: PLAINTEXT_HOST://0.0.0.0:9092,PLAINTEXT://0.0.0.0:9094
+      
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT # Define qual listener usar para comunicação interna
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      
+  # 3. Ferramenta de Monitoramento (Kafdrop - Opcional, mas RECOMENDADO)
+  kafdrop:
+    image: obsidiandynamics/kafdrop:latest
+    container_name: kafdrop
+    depends_on:
+      - kafka
+    ports:
+      - "19000:9000" # Porta para acesso web (seu navegador)
+    environment:
+      KAFKA_BROKERCONNECT: kafka:9094 # Conecta ao Kafka usando o nome do serviço interno
+      JVM_OPTS: "-Xms32m -Xmx256m"
