@@ -1,1 +1,182 @@
-teste
+Neste projeto atual, conforme o seu nome, quero simuluar um microsserviço para gerenciar mensageria do kafka de uma aplicação de delivery.
+Sendo assim, quero algo bem desenvolvido, distribuido e em padrão clean code.
+para a parte de logs, quero usar o pino ou winster, veja qual é a referência de mercado, por favor.
+quero uma arquitetura hexagonal bem definida, com a cadama de API, DOMÍNIO e INFRAESTRUTA.
+Sendo a camada de api com o rest, dtos e converters... camada de domínio com models, service e ports... camada de infraestrutar com adapter, repositories, entities e conveters... (se bem que neste caso creio que
+não teremos persistencia, apenas adapter para comunicação com serviço do kafka...)
+traga as melhores práticas de codificação e distribuição de módulos, neste primeiro momento não precisa se preocupar com autenticação.
+neste projeto, observabilidade é a chave, pensem logs e implementações que facilitem futuras capturas por grafana loki ou apps correlatos...
+utilize padrões de nomenclatura e nomes de variáveis em inglês...
+estruture um readme bem explicativo e com on board amigável para novos desenvolvedores.
+lembre de trabalhar por etapas, crie um todo para que vá validando cada etapa a ser desenvolvida....
+abaixo tenho apenas alguns exemplos que coletei de código e do docker compose para subir uma instancia local do kafka.
+
+import { NestFactory } from '@nestjs/core';
+import { MicroserviceOptions, Transport } from '@nestjs/microservices';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.createMicroservice<MicroserviceOptions>(
+    AppModule,
+    {
+      transport: Transport.KAFKA,
+      options: {
+        client: {
+          clientId: 'delivery-processor', // ID do Cliente Kafka
+          brokers: ['localhost:9092'],    // Endereço do seu Kafka (dentro do Docker)
+        },
+        consumer: {
+          groupId: 'delivery-group', // Grupo de Consumidores (essencial no Kafka)
+        },
+      },
+    },
+  );
+  
+  await app.listen();
+  console.log('Delivery Processor Microservice is running (Kafka Consumer)');
+}
+bootstrap();
+
+import { NestFactory } from '@nestjs/core';
+import { MicroserviceOptions, Transport } from '@nestjs/microservices';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.createMicroservice<MicroserviceOptions>(
+    AppModule,
+    {
+      transport: Transport.KAFKA,
+      options: {
+        client: {
+          clientId: 'delivery-processor', // ID do Cliente Kafka
+          brokers: ['localhost:9092'],    // Endereço do seu Kafka (dentro do Docker)
+        },
+        consumer: {
+          groupId: 'delivery-group', // Grupo de Consumidores (essencial no Kafka)
+        },
+      },
+    },
+  );
+  
+  await app.listen();
+  console.log('Delivery Processor Microservice is running (Kafka Consumer)');
+}
+bootstrap();
+
+import { Controller, Logger } from '@nestjs/common';
+import { EventPattern, Ctx, KafkaContext, Payload } from '@nestjs/microservices';
+
+// Definindo a estrutura da mensagem para tipagem (melhores práticas de TS)
+interface OrderCreatedPayload {
+  orderId: string;
+  customerName: string;
+  address: string;
+  isPriority: boolean;
+}
+
+@Controller()
+export class DeliveryController {
+  private readonly logger = new Logger(DeliveryController.name);
+
+  // O EventPattern define qual tópico Kafka este método irá escutar
+  @EventPattern('order.created')
+  handleOrderCreated(
+    @Payload() data: OrderCreatedPayload, // O corpo da mensagem
+    @Ctx() context: KafkaContext,         // O contexto para acesso a metadados (tópico, offset)
+  ) {
+    const topic = context.getTopic();
+    this.logger.log(`[TOPIC: ${topic}] Novo Pedido Recebido: ${data.orderId}`);
+    
+    // --- Lógica de Processamento do Pedido de Delivery ---
+    
+    let dispatchTime = 2000;
+    if (data.isPriority) {
+        this.logger.warn(`*** Pedido PRIORITÁRIO. Despacho acelerado. ***`);
+        dispatchTime = 500;
+    }
+
+    // Simulação do processamento (ex: buscar motoboy, atualizar status no DB)
+    setTimeout(() => {
+        this.logger.log(`✅ Pedido ${data.orderId} processado para o cliente ${data.customerName}. Pronto para despacho para: ${data.address}.`);
+    }, dispatchTime);
+    
+    // O NestJS e o 'kafkajs' geralmente fazem o commit do offset automaticamente
+  }
+}
+
+import { Module } from '@nestjs/common';
+import { DeliveryController } from './delivery/delivery.controller';
+
+@Module({
+  imports: [],
+  controllers: [DeliveryController],
+  providers: [],
+})
+export class AppModule {}
+
+// No OrderService do 'order-service' (o produtor)
+import { ClientKafka } from '@nestjs/microservices';
+
+// ...
+constructor(@Inject('KAFKA_SERVICE') private client: ClientKafka) {}
+
+async createOrder(orderData: any) {
+  // O valor enviado é o 'payload' que o consumidor receberá
+  this.client.emit('order.created', {
+    orderId: 'ORD-12345',
+    customerName: 'João Silva',
+    address: 'Rua das Flores, 100',
+    isPriority: true,
+  });
+  return { status: 'Order accepted and event emitted' };
+}
+
+version: '3.8'
+
+services:
+  # 1. Serviço Zookeeper (Requerido pelo Kafka - Versão Legacy/Stable)
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  # 2. Serviço Kafka Broker
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092" # Porta que seu NestJS (host) usará para se conectar
+      - "9094:9094" # Porta interna para comunicação inter-broker/docker
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181' # Conexão com o container Zookeeper
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT_HOST:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      
+      # *** Configuração CRUCIAL para conectar do seu HOST (NestJS) ***
+      # O NestJS (rodando no HOST) se conecta ao Kafka usando 'localhost:9092'
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT_HOST://localhost:9092,PLAINTEXT://kafka:9094
+      
+      # LISTENERS internos do container
+      KAFKA_LISTENERS: PLAINTEXT_HOST://0.0.0.0:9092,PLAINTEXT://0.0.0.0:9094
+      
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT # Define qual listener usar para comunicação interna
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      
+  # 3. Ferramenta de Monitoramento (Kafdrop - Opcional, mas RECOMENDADO)
+  kafdrop:
+    image: obsidiandynamics/kafdrop:latest
+    container_name: kafdrop
+    depends_on:
+      - kafka
+    ports:
+      - "19000:9000" # Porta para acesso web (seu navegador)
+    environment:
+      KAFKA_BROKERCONNECT: kafka:9094 # Conecta ao Kafka usando o nome do serviço interno
+      JVM_OPTS: "-Xms32m -Xmx256m"

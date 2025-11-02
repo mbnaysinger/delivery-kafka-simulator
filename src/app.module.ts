@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { LoggerModule } from 'nestjs-pino';
+import { DeliveryModule } from './delivery.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { LoggerModule } from 'nestjs-pino';
         },
       },
     }),
+    DeliveryModule,
   ],
   controllers: [AppController],
   providers: [AppService],
